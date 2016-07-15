@@ -1,255 +1,201 @@
-#NGS Analsysis Steps:
+#!/bin/bash
 
-.......................................................................................
-#Step1:
-#Getting the refrence genome:
-# get the reference genome form 
-url: ftp://ftp.broadinstitute.org/bundle/2.8/hg19/
-#file_name ucsc.hg19.fasta.gz 
-URL: ftp://gsapubftp-anonymous@ftp.broadinstitute.org/bundle/2.8/hg19/ucsc.hg19.fasta.gz
-# .dict file unnecessery to download as it has different directory path, better to generate own .dict file
-# .fai index file is also available and can be downloaded as well with fasta file.
-# Also get the md5 checksum file.
-#check the downlaoded file md5 key (make sure the address of file in md5 key file is corrected to the same directory of the file.)
-> md5sum key_file_name.md5
-.......................................................................................
-#Step2:
-#Quality check of FASTQ files:
-> fastqc sample.fastq
-#!Note: the report files generated are stored in the folder with the sample name with fastqc extension
+# file transfer from miSEQ directory
+echo "Please enter the experiment directory name:"
+read dir1
+echo "Enter the password for file transfer"
+read PASS
+	#if we need to hide the visibility of password
+	# stty -echo; read PASS; stty echo;
+#writing the log file.........
+exec 3>&1 4>&2
+trap 'exec 2>&4 1>&3' 0 1 2 3
+exec 1>/data/log_record/$dir1.log 2>&1
+#.............................
+echo "You have selected $dir1 for analysis"
 
-.......................................................................................
-#Step3: Preparing a reference for use with BWA and GATK
-		# https://www.broadinstitute.org/gatk/guide/article?id=2798
-#a: Creating the BWA index from reference genome
-	> bwa index -a bwtsw hg19.fa
-	#!Note here bwtsw option is for longe genome, so for human & -p is to replicate teh prefix name index files
-	#This creates a collection of files used by BWA to perform the alignment.
+echo "Analysis starteded at:"; date +"%T" ; date +'%d/%m/%Y';
 
-#b: Generate the fasta file index
-	> samtools faidx hg19.fa 
-	# This creates a file called reference.fa.fai, with one record per line for each of the contigs in the FASTA reference file. Each record is composed of the contig name, size, location, basesPerLine and bytesPerLine.
+echo "copying the raw experiment data to the data directory for analysis"
+cp -r /mnt/miseq/Medisinsk_Genetikk/Data/$dir1  /data/
 
-#c: Generate the sequence dictionary
-	> java -jar ~/my_tools/picard-tools-1.140/picard.jar CreateSequenceDictionary \
-    	REFERENCE=hg19.fa \ 
-    	OUTPUT=hg19.dict
-    # This creates a file called hg19.dict formatted like a SAM header, describing the contents of reference FASTA file.
+echo "total number of samples to be processed:"
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*.fastq.gz" | grep -v _R2_001.fastq.gz |sort | sed 's/_R1_001.fastq.gz//' | wc -l
+echo "List of samples to be processed:"
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*.fastq.gz" | grep -v _R2_001.fastq.gz |sort | head -8| sed 's/_R1_001.fastq.gz//'
 
-.......................................................................................
-#Step4:
-#Alignment of the short reads with the Reference genome:
+echo " changing the working directory to Reference directory for processing"
+cd /data/Data/hg19/
+#.........................................................................................................................................................................................
+# BWA alignment:..............................
+echo "Alignment of the short reads FASTQ files with the Reference genome (hg19):"
+find /data/$dir1/Data/Intensities/BaseCalls/  -name "*.fastq.gz" | grep -v _R2_001.fastq.gz |sort | head -n 8| tail -n 8|sed 's/_R1_001.fastq.gz//' | parallel bwa mem -M ucsc.hg19.fasta {}_R1_001.fastq.gz {}_R2_001.fastq.gz '>' '{}'.sam 
+find /data/$dir1/Data/Intensities/BaseCalls/  -name "*.fastq.gz" | grep -v _R2_001.fastq.gz |sort | head -n 16| tail -n 8|sed 's/_R1_001.fastq.gz//' | parallel bwa mem -M ucsc.hg19.fasta {}_R1_001.fastq.gz {}_R2_001.fastq.gz '>' '{}'.sam 
+find /data/$dir1/Data/Intensities/BaseCalls/  -name "*.fastq.gz" | grep -v _R2_001.fastq.gz |sort | head -n 24| tail -n 8|sed 's/_R1_001.fastq.gz//' | parallel bwa mem -M ucsc.hg19.fasta {}_R1_001.fastq.gz {}_R2_001.fastq.gz '>' '{}'.sam 
+#.............................................
+# removing the fastq.gz file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*.fastq.gz
+#.............................................
+#.........................................................................................................................................................................................
+# Picard Data Preprocessing:..................
+#Convert to BAM, sort and mark duplicates
+echo "Converting aligned SAM files to BAM files:"
+	#a: Convert to BAM and sorting
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*.sam"| sort | head -n 8| tail -n 8| sed 's/_L001.sam//' | parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar SortSam INPUT= {}_L001.sam OUTPUT= {}_sorted.bam SORT_ORDER=coordinate
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*.sam"| sort | head -n 16| tail -n 8| sed 's/_L001.sam//' | parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar SortSam INPUT= {}_L001.sam OUTPUT= {}_sorted.bam SORT_ORDER=coordinate
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*.sam"| sort | head -n 24| tail -n 8| sed 's/_L001.sam//' | parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar SortSam INPUT= {}_L001.sam OUTPUT= {}_sorted.bam SORT_ORDER=coordinate
+#.............................................
+# removing the SAM file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*.sam
+#.............................................
 
-#Alignment of paired-end files:
-> bwa mem -M -t 8 ref.fa read1.fq read2.fq > aln.sam
-# The -M flag causes BWA to mark shorter split hits as secondary (essential for Picard compatibility).
-# -t 8 threads are the most optimal (as checked with 1,4,8 & 16 threads)
+echo "Marking the Duplicats in BAM files:"	
+	#b: Marking the Duplicate
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted.bam"| sort | head -n 8| tail -n 8| sed 's/_sorted.bam//' | parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar MarkDuplicates INPUT= {}_sorted.bam OUTPUT= {}_sorted_dedup.bam METRICS_FILE= {}_metrics.txt
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted.bam"| sort | head -n 16| tail -n 8| sed 's/_sorted.bam//' | parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar MarkDuplicates INPUT= {}_sorted.bam OUTPUT= {}_sorted_dedup.bam METRICS_FILE= {}_metrics.txt
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted.bam"| sort | head -n 24| tail -n 8| sed 's/_sorted.bam//' | parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar MarkDuplicates INPUT= {}_sorted.bam OUTPUT= {}_sorted_dedup.bam METRICS_FILE= {}_metrics.txt
+#.............................................
+# removing the sorted.bam file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_sorted.bam
+# removing the metrics.txt file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/_metrics.txt
+#.............................................
+#adding header informating to the bam file
+echo "adding header informating to the bam file"
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup.bam"| sort |head -n 8| tail -n 8| sed 's/_sorted_dedup.bam//'| parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar AddOrReplaceReadGroups I= {}_sorted_dedup.bam O= {}_sorted_dedup_RG.bam SORT_ORDER=coordinate RGID= {} RGLB=bar RGPL=illumina RGPU=illumina_miSEQ RGSM= {} CREATE_INDEX=True
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup.bam"| sort |head -n 16| tail -n 8| sed 's/_sorted_dedup.bam//'| parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar AddOrReplaceReadGroups I= {}_sorted_dedup.bam O= {}_sorted_dedup_RG.bam SORT_ORDER=coordinate RGID= {} RGLB=bar RGPL=illumina RGPU=illumina_miSEQ RGSM= {} CREATE_INDEX=True
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup.bam"| sort |head -n 24| tail -n 8| sed 's/_sorted_dedup.bam//'| parallel java -jar ~/my_tools/picard-tools-1.140/picard.jar AddOrReplaceReadGroups I= {}_sorted_dedup.bam O= {}_sorted_dedup_RG.bam SORT_ORDER=coordinate RGID= {} RGLB=bar RGPL=illumina RGPU=illumina_miSEQ RGSM= {} CREATE_INDEX=True
+#.............................................
+# removing the sorted_deduplicated file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_sorted_dedup.bam
+#.............................................
 
-.......................................................................................
-#Step5: Convert to BAM, sort and mark duplicates
-#a: Convert to BAM and sorting
-> java -jar ~/my_tools/picard-tools-1.140/picard.jar  \
-	SortSam  \ 
-    INPUT=aligned_reads.sam  \ 
-    OUTPUT=sorted_reads.bam  \ 
-    SORT_ORDER=coordinate
-#b: Marking the Duplicate
-> java -jar ~/my_tools/picard-tools-1.140/picard.jar \
-	MarkDuplicates  \ 
-    INPUT=sorted_reads.bam  \ 
-    OUTPUT=dedup_reads.bam  \
-    METRICS_FILE=metrics.txt
+#.........................................................................................................................................................................................
+#Indel Realignment:.....................
+echo "INDEL Realignment using GATK:"
 
-.......................................................................................
-#Step6: Indexing the BAM file 
+	#target creator:
+echo "running GATK TARGET CREATOR"
+	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG.bam"| sort |head -n 8| tail -n 8| sed 's/_sorted_dedup_RG.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T RealignerTargetCreator -R ucsc.hg19.fasta -I {}_sorted_dedup_RG.bam -known /data/Data/GATK_resources/Mills_and_1000G_gold_standard.indels.hg19.sites.vcf -known /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -o {}_realigner.intervals
+	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG.bam"| sort |head -n 16| tail -n 8| sed 's/_sorted_dedup_RG.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T RealignerTargetCreator -R ucsc.hg19.fasta -I {}_sorted_dedup_RG.bam -known /data/Data/GATK_resources/Mills_and_1000G_gold_standard.indels.hg19.sites.vcf -known /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -o {}_realigner.intervals
+	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG.bam"| sort |head -n 24| tail -n 8| sed 's/_sorted_dedup_RG.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T RealignerTargetCreator -R ucsc.hg19.fasta -I {}_sorted_dedup_RG.bam -known /data/Data/GATK_resources/Mills_and_1000G_gold_standard.indels.hg19.sites.vcf -known /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -o {}_realigner.intervals
+	# Performing actual alignment
+echo "performing actual Alignment"	
+	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG.bam"| sort |head -n 8| tail -n 8| sed 's/_sorted_dedup_RG.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T IndelRealigner -R ucsc.hg19.fasta -I {}_sorted_dedup_RG.bam -known /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -targetIntervals {}_realigner.intervals -o {}_sorted_dedup_RG_IndReAl.bam
+	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG.bam"| sort |head -n 16| tail -n 8| sed 's/_sorted_dedup_RG.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T IndelRealigner -R ucsc.hg19.fasta -I {}_sorted_dedup_RG.bam -known /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -targetIntervals {}_realigner.intervals -o {}_sorted_dedup_RG_IndReAl.bam
+	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG.bam"| sort |head -n 24| tail -n 8| sed 's/_sorted_dedup_RG.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T IndelRealigner -R ucsc.hg19.fasta -I {}_sorted_dedup_RG.bam -known /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -targetIntervals {}_realigner.intervals -o {}_sorted_dedup_RG_IndReAl.bam
+#.............................................
+# removing the sorted_dedup_RG file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_sorted_dedup_RG.bam
+# removing the sorted_dedup_RG file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_realigner.intervals
+#.............................................
 
-> java -jar picard.jar BuildBamIndex  \ 
-    INPUT=dedup_reads.bam 
-#Index files are required to visualize the sequence in the genome browsers (e.g. IGV)
-			..........................
-			## to view the bam files
-			>samtools view -h read.bam
-			..........................
-.......................................................................................
-#Step7: Indel Realignment: (It only makes a difference for indels anyhow)
-#Note! Realignment around indels helps improve the accuracy of several  of the  downstream processing steps
-#a: Realignment target creator: Identify what regions need to be realigned
-# preprocessing step to find intervals that may need realignment.
-		#URL: https://docs.google.com/file/d/0B2dK2q40HDWeLTFzNndsNDBuVms/preview
-#pre-requsit: .dist file and fasta indax file (create using SAMtools)
+#Base Quality Score Recalibration:.............
+echo "Base Quality Score Recalibration step:"
+	#a: BaseRecalibrator:
+echo "running GATK BaseRecalibrator"
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl.bam"| sort |head -n 8| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T BaseRecalibrator -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl.bam -knownSites /data/Data/GATK_resources/dbsnp_138.hg19.vcf -knownSites /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -o {}_recal.table
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl.bam"| sort |head -n 16| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T BaseRecalibrator -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl.bam -knownSites /data/Data/GATK_resources/dbsnp_138.hg19.vcf -knownSites /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -o {}_recal.table
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl.bam"| sort |head -n 24| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T BaseRecalibrator -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl.bam -knownSites /data/Data/GATK_resources/dbsnp_138.hg19.vcf -knownSites /data/Data/GATK_resources/1000G_phase1.indels.hg19.sites.vcf -o {}_recal.table
 
-> java -jar GenomeAnalysisTK.jar -T RealignerTargetCreator \
-	   -R hg19.fa \
-	   -I original.bam \
-	   -known indels.vcf \
-	   -o realigner.intervals
-	   #input BAM file not necessery if processing only at known indels
-	   #using a list of known indels will both speed up processign and improve accuracy, but
-	   # required.
-	   # http://gatkforums.broadinstitute.org/discussion/1874/effects-of-dbsnp-in-the-step-of-indel-realignment
-	   # http://gatkforums.broadinstitute.org/discussion/1213/whats-in-the-resource-bundle-and-how-can-i-get-it
-	   		
-	   		#TROUBLE SHOOTING: 
-	   		#IF we get Errors about missing read group (RG) information
-	   				
-	   				#Then add the HEADER read group to the BAM file.
-	   				> java -jar picard.jar AddOrReplaceReadGroups \
-    		  				I= reads_without_RG.bam \
-    						O=  reads_with_RG.bam \
-   				    		SORT_ORDER=coordinate \  #default as input file
-    						RGID=foo \  #default is 1, and can not be 'null'
-    						RGLB=bar \
-    						RGPL=illumina \
-    						RGPU=illumina_miSEQ #can not be 'null'
-    						RGSM=Sample1 \
-    						CREATE_INDEX=True
-    		#or
-    		#> java -jar ~/my_tools/picard-tools-1.140/picard.jar AddOrReplaceReadGroups I=dedup_sorted_aln_t8.bam O=RG_dedup_sorted_aln_t8.bam SORT_ORDER=coordinate RGID= ash9nov RGLB=bar RGPL=illumina RGPU=illumina_miSEQ RGSM=Sample_SS_0284 CREATE_INDEX=True
+	#b: PrintReads: 
+echo "running GATK PrintReads"
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl.bam"| sort |head -n 8| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T PrintReads -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl.bam -BQSR {}_recal.table -o {}_sorted_dedup_RG_IndReAl_Baserecal.bam
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl.bam"| sort |head -n 16| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T PrintReads -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl.bam -BQSR {}_recal.table -o {}_sorted_dedup_RG_IndReAl_Baserecal.bam
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl.bam"| sort |head -n 24| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T PrintReads -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl.bam -BQSR {}_recal.table -o {}_sorted_dedup_RG_IndReAl_Baserecal.bam
+#.............................................
+# removing the sorted_dedup_RG_IndReal file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_sorted_dedup_RG_IndReAl.bam
+# removing the recal.table file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_recal.table
+#.............................................
+	# the FINAL BAM file is : "sorted_dedup_RG_IndReAl_Baserecal.bam" , that will be stored in database
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#Variant calling:..........................
+echo "Running GATK HaplotypeCaller:"	
+#HaplotypeCaller:
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort |head -n 8| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort |head -n 16| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort |head -n 24| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
 
-#b: Indel Realigner: perform the actual alignment.
-> java -jar GenomeAnalysisTK.jar -T IndelRealigner \
-	  -R hg19.fa
-	  -I original.bam \
-	  -known indels.vcf \
-	  -targetIntervals realigner.intervals \
-	  -o realigned.bam
-#or
-#> java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T IndelRealigner -R hg19.fa -I RG_dedup_sorted_aln_t8.bam -targetIntervals realigner.intervals -o IndelRealigned_RG_dedup_sorted_aln_t8.bam
-	  # Must use the same input file(s) used in RealignerTargetCreator step
-	  # processing options
-	  	 #- Only at known indels: much faster, accurate for ~90-95% of indels
-	  	 #- At indels seen in the original BAM alignments: the recommended mode!!!!!
-	  	 #- Using full Smith-Waterman realignment: most accurate, but heavu computational
-	  	 #  cost and not really necessary with the new techs
-.......................................................................................
-#Step:8: Base Quality Score Recalibration:
-		# URL: https://docs.google.com/file/d/0B2dK2q40HDWeZk1rMXpTYmZzTXc/preview
+#Genotyping:.............................
+echo "Running GATK GenotypeGVCFs"
+#GenotypeGVCFs
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_raw_SNP_INDEL.g.vcf"| sort |head -n 8| tail -n 8| sed 's/_raw_SNP_INDEL.g.vcf//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T GenotypeGVCFs -R ucsc.hg19.fasta -V {}_raw_SNP_INDEL.g.vcf -o {}_SNP_INDEL_genotyped.vcf
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_raw_SNP_INDEL.g.vcf"| sort |head -n 16| tail -n 8| sed 's/_raw_SNP_INDEL.g.vcf//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T GenotypeGVCFs -R ucsc.hg19.fasta -V {}_raw_SNP_INDEL.g.vcf -o {}_SNP_INDEL_genotyped.vcf
+find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_raw_SNP_INDEL.g.vcf"| sort |head -n 24| tail -n 8| sed 's/_raw_SNP_INDEL.g.vcf//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T GenotypeGVCFs -R ucsc.hg19.fasta -V {}_raw_SNP_INDEL.g.vcf -o {}_SNP_INDEL_genotyped.vcf
 
-#a: BaseRecalibrator: Mode the error modes and recalibrate qualities. producing the recalibration table
-> java -jar GenomeAnalysisTK.jar -T BaseRecalibrator \
-		-R hg19.fa \
-		-I realigned.bam \
-		-knownSites dbsnp137.vcf \ # its just example.
-		-knownSites gold.standard.indels.vcf \ # its just an example.
-		-o recal.table
-		#NOTE! make sure the knownSites and reference genome have the contigs in same order.
-		#web resources for knownSites:
-		# http://gatkforums.broadinstitute.org/discussion/1213/whats-in-the-resource-bundle-and-how-can-i-get-it
-		# ftp://ftp.broadinstitute.org/bundle/2.8/hg19/
-		# possible error can be reordering of the contigs in reference in same order to the known site contigs.
-		# solution: https://www.broadinstitute.org/gatk/guide/article?id=1328
-#b: PrintReads: Write the recalibrated data to file.
-> java -jar GenomeAnalysisTK.jar -T PrintReads \
-		-R hg19.fa \
-		-I realigned.bam \
-		-BQSR recal.table \   #Original qualities can be retaind with OQ tag.
-		-o recal.bam
-		# Creates a new bam file using the input table generated previously which has exquisitely accurate base substitution, insertion, and deletion quality scoures
+#.............................................
+# removing the raw_SNP_INDEL.g.vcf file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_raw_SNP_INDEL.g.vcf
+#.............................................
+	#SNP_INDEL_genotyped.vcf is the final VCF file
+#.............................................
 
-#c: To plot the before/after plot, we need to recalibrate the resultant recalibrated bam file.
-	# so we will repeter the step #a once more with the recalibrated bam file.
-> java -jar GenomeAnalysisTK.jar -T BaseRecalibrator \
-		-R hg19.fa \
-		-I realigned.bam \
-		-knownSites dbsnp137.vcf \ # its just example.
-		-knownSites gold.standard.indels.vcf \ # its just an example.
-		-BQSR recal.table \
-		-o after_recal.table
+# variant Quality Score Recalibration:
+echo "VQSR step will be SKIPPED!! here, as we are running the gene panels"
 
-#d: AnalyzeCovariates: 
-	#Note! It requires the R ​gsalib package)
+#.........................................................................................................................................................................................
 
-	#Plot a single recalibration table
->java -jar GenomeAnalysisTK.jar \
-      -T AnalyzeCovariates \
-      -R hg19.fasta \
-      -BQSR recal.table \
-      -plots BQSR.pdf
-	
-	# Plot before (first pass) and after (second pass) recalibration tables to compare them 
-> java -jar GenomeAnalysisTK.jar -T AnalyzeCovariates \
-		-R hg19.fa \
-		-before recal.table \
-		-after after_recal.table \
-		-plots recal_plots.pdf   # there is option to keep the internediate.csv file used for plotting, if we want to play with the plot data.
-		# Error: mostly due to Rscript. Make sure for right version of R and right packages example: ggplots, ggpots2, gsalib.
-# Note! Post-recalibrated quality score should fit the empirically-derived quality score very well; no obvious systematic biases should remain..
-.......................................................................................
-					
-#Step:9:					### variant_CALLING ###
+#variantFiltration:
+echo "GATK variantFiltration:"
+for i in /data/$dir1/Data/Intensities/BaseCalls/*_SNP_INDEL_genotyped.vcf ;
+	do 
+		i2=${i%.*}_filtered.vcf;
+		java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T VariantFiltration -R ucsc.hg19.fasta --variant $i -o $i2 --clusterWindowSize 10 --filterExpression "MQ0 >= 4 && ((MQ0/(1.0 * DP)) > 0.1)" --filterName "HARD_TO_VALIDATE" --filterExpression "DP < 5 " --filterName "LowCoverage" --filterExpression "QUAL < 30.0 " --filterName "VeryLowQual" --filterExpression "QUAL > 30.0 && QUAL < 50.0 " --filterName "LowQual" --filterExpression "QD < 1.5 " --filterName "LowQD" --filterExpression "SB > -10.0 " --filterName "StrandBias" ;
+	done
 
-# URL: https://docs.google.com/file/d/0B2dK2q40HDWeQUFYUFRmM1hhRUE/preview
-# URL: https://docs.google.com/file/d/0B2dK2q40HDWeYzVTUGs0bjM3M1E/preview
-# As per GATK people, Joint variant discovery (MULTI-SAMPLE variant DISCOVERY) is more informative
-#variant calling of individual samples will miss important informations.
+#.........................................................................................................................................................................................
+cd /data/Data/annovar/
 
+# ANNOVAR annotation of variants:
+echo "ANNOVAR annotation of variants:"
 
-#UnifiedGenotyper: Calls SNPs & Indels on per-locus basis
+for i in /data/$dir1/Data/Intensities/BaseCalls/*_genotyped_filtered.vcf ;
+	do 
+		i2=${i%.*}_ANNOVAR;
+		perl table_annovar.pl $i humandb/ -buildver hg19 -out $i2 -remove -protocol refGene,phastConsElements46way,genomicSuperDups,1000g2015aug_eur,snp138,ljb26_all,esp6500si_all,exac03,clinvar_20150629,cosmic70 -operation g,r,r,f,f,f,f,f,f,f -nastring . -vcfinput 
+	done
 
-#HaplotypeCaller: The program determines which regions of the genome it needs to operate on, based on the presence of significant evidence for variation.
-				# so it Calls SNPs & Indels simeltenously via re-assembly of haplotypes in an active region.
-#URL: https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php
+#.............................................
+# removing the raw_SNP_INDEL.g.vcf file for making space.
+rm /data/$dir1/Data/Intensities/BaseCalls/*_SNP_INDEL_genotyped_filtered.vcf
+#.............................................
 
-	#- Calls SNPs and indels simultaneously.
-	#- Performs local re-assembly to Identify haplotypes.
+#.........................................................................................................................................................................................
+echo "VARIANT CALLING done!!!"
+echo "FILTER TAGGING done!!!"
+echo "ANNOTATION of variants done!!!"
+#.........................................................................................................................................................................................
 
-#Single-sample all-sites calling on DNAseq (for `-ERC GVCF` cohort analysis workflow)
-> java -jar GenomeAnalysisTK.jar -T HaplotypeCaller \
-		-R hg19.fa \
-		-I sample1.bam  # analysis ready samples
-		-o output.raw.snps.indels.g.vcf \  #extension must be in .vcf, NOT in .gvcf
-		-ERC GVCF \  # --emitRefConfidence GVCF\ , also available in BP_RESOLUTION
-		--variant_index_type LINEAR \   #variant index arguments are related to file compression
-		--variant_index_parameter 128000 \
-		--dbsnp dbsnp137.vcf \ #optional
-		-L targets.intervals_list \ #optional, URL:  http://gatkforums.broadinstitute.org/discussion/4133/when-should-i-use-l-to-pass-in-a-list-of-intervals#latest
+#File rearrangement:
+echo "File Re-Arrangement (in to Sub-Directories) respective to their analysis:"
 
-#GenotypeGVCFs: performs joint genotyping on all samples together:
-> java -jar GenomeAnalysisTK.jar -T GenotypeGVCFs \ 
-		-R hg19.fa \
-		-V sample1.g.vcf \
-		-V sample2.g.vcf \
-		-V sampleN.g.vcf \
-		-o output.vcf
-		# if >200 samples, combine in batches first using CombineGVCFs
+#....................................
+mkdir /data/$dir1/Data/Intensities/BaseCalls/6_GATK_BQSR
+mv /data/$dir1/Data/Intensities/BaseCalls/*_sorted_dedup_RG_IndReAl_Baserecal.* /data/$dir1/Data/Intensities/BaseCalls/6_GATK_BQSR
 
-......................................................................................
+#....................................
+mkdir /data/$dir1/Data/Intensities/BaseCalls/8_GATK_GenotypeGVCFs
+mv /data/$dir1/Data/Intensities/BaseCalls/*_SNP_INDEL_genotyped.vcf* /data/$dir1/Data/Intensities/BaseCalls/8_GATK_GenotypeGVCFs
 
-#Step10: variant Quality Score Recalibration: 
-			#Assigning accurate confidance scores to each putative mutation call
-			#Buiding a model of what true genetic variation looks like will allow us to rank-order variants based on their likelihood of being real.
-
-	#a: VariantRecalibrator:
-			#Note! SNPs and Indels must be recalibrated separately!
-	> java -jar GenomeAnalysisTK.jar -T VariantRecalibrator \
-			-R hg19.fa \
-			-input raw_SNPs_Indels.vcf \  #its -input not -I
-			-resource:hapmap,known=false,training=true,truth=true,prior=15.0 hapmap_3.3.hg19.sites.vcf  \
-   			-resource:omni,known=false,training=true,truth=false,prior=12.0 1000G_omni2.5.b37.sites.vcf \
-   			-resource:1000G,known=false,training=true,truth=false,prior=10.0 1000G_phase1.snps.high_confidence.vcf \ #issue with the file, contig not in same order.
-			-resource:dbsnp,known=true,training=false,truth=false,prior=6.0 dbsnp_135.b37.vcf \
-			-an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR --maxGaussians 4  # -an InbreedingCoeff \ #The InbreedingCoeff statistic is a population-level calculation that is only available with 10 or more samples. If you have fewer samples you will need to omit that particular filter statement.
-			-mode SNP \   #like wise for Indels
-			-recalFile raw_SNPs.recal \  #likewise raw_INDELs.recal
-			-tranchesFile raw_SNPs.tranches \ #likewise raw_INDELs.tranches
-			-rscriptFile recal.plots.R
-
-			#Indelspecific
-			--maxGaussians 4 \   #set it to "2" if face error message "NaN LOD value assigned. Clustering with this few variants and these annotations is unsafe. 
-   			-resource:mills,known=false,training=true,truth=true,prior=12.0 Mills_and_1000G_gold_standard.indels.b37.sites.vcf \
-   			-resource:dbsnp,known=true,training=false,truth=false,prior=2.0 dbsnp.b37.vcf \
-   			-an QD -an DP -an FS -an SOR -an ReadPosRankSum -an MQRankSum -an InbreedingCoeff \ #The InbreedingCoeff statistic is a population-level calculation that is only available with 10 or more samples. If you have fewer samples you will need to omit that particular filter statement.
-   			-mode INDEL \
-# http://gatkforums.broadinstitute.org/discussion/1259/what-vqsr-training-sets-arguments-should-i-use-for-my-specific-project
-	#b: ApplyRecalibration:
-	>java -jar  GenomeAnalysisTK.jar -T ApplyRecalibration \
-			-R hg19.fa \
-			-input raw_SNPs_Indels.vcf \   #its -input not -I
-			-mode SNP \   # -mode INDEL 
-			-recalFile raw_SNPs.recal \
-			-tranchesFile raw_SNPs.tranches \
-			-o recal_SNPs.vcf \
-			-ts_filter_level 99.5    # for indel 99.0
+#....................................
+mkdir /data/$dir1/Data/Intensities/BaseCalls/10_ANNOVAR_annotation
+mv /data/$dir1/Data/Intensities/BaseCalls/*_filtered_ANNOVAR* /data/$dir1/Data/Intensities/BaseCalls/10_ANNOVAR_annotation
 
 
+echo "$PASS\n"| sudo -S mkdir /mnt/miseq/Medisinsk_Genetikk/Resultater/$dir1
+echo "$PASS\n"| sudo -S cp -r /data/$dir1/Data/Intensities/BaseCalls/6_GATK_BQSR /mnt/miseq/Medisinsk_Genetikk/Resultater/$dir1
+echo "$PASS\n"| sudo -S cp -r /data/$dir1/Data/Intensities/BaseCalls/8_GATK_GenotypeGVCFs /mnt/miseq/Medisinsk_Genetikk/Resultater/$dir1
+echo "$PASS\n"| sudo -S cp -r /data/$dir1/Data/Intensities/BaseCalls/10_ANNOVAR_annotation /mnt/miseq/Medisinsk_Genetikk/Resultater/$dir1
+echo "Analysis finished at:"; date +"%T" ; date +'%d/%m/%Y';
+echo "$PASS\n"| sudo -S cp /data/log_record/$dir1.log /mnt/miseq/Medisinsk_Genetikk/Resultater/$dir1
+
+#removing the experiment directory from server
+cd /data/
+rm -r $dir1 
+
+df -lah
+#.........................................................................................................................................................................................
 
