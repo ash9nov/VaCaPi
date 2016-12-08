@@ -1,0 +1,34 @@
+Version information of Tools in NGS_pipeline:
+VERSION1: November,2015
+BWA: bwa-0.7.12
+source link: https://sourceforge.net/projects/bio-bwa/files/bwa-0.7.12.tar.bz2/download
+
+Picard: Picard-1.140
+source link: https://github.com/broadinstitute/picard/releases/tag/1.140
+
+Samtools: Version: 1.2
+Source_link: https://sourceforge.net/projects/samtools/files/samtools/1.2/samtools-1.2.tar.bz2/download
+
+GATK: version 3.4-46-gbc02625
+Source_link: https://software.broadinstitute.org/gatk/download/auth?package=GATK-archive&version=3.4-46-gbc02625
+
+CNVKIT: single verison
+Source_link: http://cnvkit.readthedocs.io/en/latest/quickstart.html#install-cnvkit
+
+Annovar: Latest verison
+source_link: http://annovar.openbioinformatics.org/en/latest/user-guide/download/
+_____________________________________________________________________________________
+
+VERSION2: August,2016
+
+BWA: BWA-07.15
+source_link: https://sourceforge.net/projects/bio-bwa/files/bwa-0.7.15.tar.bz2/download
+
+Picard: Picard-2.6.0
+source_link: https://github.com/broadinstitute/picard/releases/tag/2.6.0
+
+Samtools: Samptools-1.3.1
+SOurce_link: https://sourceforge.net/projects/samtools/files/latest/download
+
+GATK: GATK-3.6
+Source_Link: https://software.broadinstitute.org/gatk/download/auth?package=GATK

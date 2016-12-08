@@ -1,0 +1,238 @@
+Dated: 06.01.2016
+
+First version of fully automated pipeline created.
+(file_version_name: NGS_ANALYSIS_MedGen_06.01.2016.sh)
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Dated: 02.03.2016
+
+Changes:
+	1. Quallity control added to the pipeline.
+(file_version_name: NGS_ANALYSIS_MedGen_02.03.2016.sh)
+
+added code:
+> #====================================||
+> #Quality Control (Coverage repoprt)  ||
+> #====================================||
+> # ANALYSIS CALCULATE THE COVERAGE REPORT:
+> # Tool used in GATK DepthOfCoverage
+> 
+> # generating the .list file of all the "SORTED_DEDUPLICATED_INDEL-REALIGNED_BASE-RECALIBRATED" BAM files.
+> find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort > /data/$dir1/Data/Intensities/BaseCalls/FINAL_BAMs.list
+> 
+> # making the Quality control directory
+> mkdir /data/$dir1/Data/Intensities/BaseCalls/coverage_report
+> 
+> java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T DepthOfCoverage -R ucsc.hg19.fasta -I /data/$dir1/Data/Intensities/BaseCalls/FINAL_BAMs.list -o /data/$dir1/Data/Intensities/BaseCalls/coverage_report/$dir1 -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Dated: 24.05.2016
+
+Changes:
+        1. Quality control analysis Modification.
+	2. Gender control added to the pipeline.
+(file_version_name: NGS_ANALYSIS_MedGen_24.05.2016.sh)
+
+added code:
+
+> # Running the GATK-DepthOfCoverage command. It will generate 7 files
+195a197,296
+> # NOTE! Out of these 7 files, we will use only 2 files "$dir1.sample_summary" && "$dir1.sample_interval_summary" for our need.
+> # Removing the unnecessery 5 files:
+> rm /data/$dir1/Data/Intensities/BaseCalls/coverage_report/$dir1
+> rm /data/$dir1/Data/Intensities/BaseCalls/coverage_report/$dir1.sample_cumulative_coverage_counts
+> rm /data/$dir1/Data/Intensities/BaseCalls/coverage_report/$dir1.sample_cumulative_coverage_proportions
+> rm /data/$dir1/Data/Intensities/BaseCalls/coverage_report/$dir1.sample_interval_statistics
+> rm /data/$dir1/Data/Intensities/BaseCalls/coverage_report/$dir1.sample_statistics
+> 
+> #Customization of coverage report data..
+> #change of directory (from hg19 to coverage_report)
+> cd /data/$dir1/Data/Intensities/BaseCalls/coverage_report/
+> # changing the long names
+> sed -i "s/\/data\/$dir1\/Data\/Intensities\/BaseCalls\///g" *
+> #Generating the sample_mean_coverage file (subset) from the sample_interval_summary file (superset) 
+> cut -f 1 "$dir1.sample_interval_summary" > "$dir1.sample_interval_mean_coverage"
+> cut -f 1 "$dir1.sample_interval_summary" > "$dir1.temp1"
+> i=1
+> while [ "$i" -le "$smpl" ] ; 
+> do
+>         jj=$(((6*$i)-1))
+>         cut -f $jj "$dir1.sample_interval_summary" > "$dir1.temp"
+>         paste -d "\t" "$dir1.sample_interval_mean_coverage" "$dir1.temp" > "$dir1.op"
+>         mv "$dir1.op" "$dir1.sample_interval_mean_coverage"
+>         read -r FIRSTLINE < $dir1.temp
+>         paste -d "\t" "$dir1.temp1" "$dir1.temp" > "$FIRSTLINE.txt"
+>         awk 'FNR==NR { a[$1]=$2; next } $1 in a { print $1"\t"a[$1]"\t"$2"\t"$3 }' "$FIRSTLINE.txt" /data/Data/Target_ex_n_gn_mdfd_strtPlus1_merged_regions_for_CovRept_2120.bed > "$FIRSTLINE.annotated.txt"
+>         awk -v x=30 -F "\t" '$2<=x {print}' "$FIRSTLINE.annotated.txt" > "$FIRSTLINE.low_coverage_region.txt"
+>         rm "$FIRSTLINE.txt"
+>         rm "$FIRSTLINE.annotated.txt"
+>         i=$(($i+1));
+> done
+> rm $dir1.temp*
+> sort "$dir1.sample_interval_mean_coverage" > bb1
+> sort /data/Data/Target_ex_n_gn_mdfd_strtPlus1_merged_regions_for_CovRept_2120.bed > bb2
+> join -j 1 bb1 bb2 > "$dir1.sample_interval_mean_coverage_annotated.txt"
+> rm bb1
+> rm bb2
+> rm $dir1.sample_interval_mean_coverage
+> rm $dir1.sample_interval_summary
+> #---------------------------------------------
+> #Running Samtools-flagstat to generate the mapping statistics
+> for i in /data/$dir1/Data/Intensities/BaseCalls/*_sorted_dedup_RG_IndReAl_Baserecal.bam;
+> 	do
+> 		i2=${i%.*}_mapping_statistics.txt;
+>                 samtools flagstat $i > $i2
+> 	done
+> #adding sample name on top of each sample mapping_statistics file
+> for i in /data/$dir1/Data/Intensities/BaseCalls/*_mapping_statistics.txt;
+> 	do
+> 		echo "$i\n$(cat $i)" > $i # it adds the sample name on to of FLAGSTAT output
+>                 sed -i "s/\/data\/$dir1\/Data\/Intensities\/BaseCalls\///g" $i
+>                 sed -i "s/_sorted_dedup_RG_IndReAl_Baserecal_mapping_statistics.txt//g" $i
+> 	done
+> #generating tab-seperated table of all-sample mapping summary
+> cp /data/Data/flag_property "$dir1.mapping_summary.txt"
+> for i in /data/$dir1/Data/Intensities/BaseCalls/*_mapping_statistics.txt;
+> 	do
+>                 cut -d "+" -f 1 "$i" > "$dir1.temp"
+>                 paste -d "\t" "$dir1.mapping_summary.txt" "$dir1.temp" > "$dir1.map"
+>                 mv "$dir1.map" "$dir1.mapping_summary.txt"
+>         done
+> rm $dir1.temp
+> rm *mapping_statistics.txt
+> #---------------------------------------------
+> # Generating PER-RUN total mapping percentage
+> TOTAL=$(grep 'total' $dir1.mapping_summary.txt | sed 's/\t/+/g' | bc)
+> echo "total reads= $TOTAL"
+> MAPPED=$(grep 'mapped' $dir1.mapping_summary.txt | grep -v '_mapped'| sed 's/\t/+/g' | bc)  # sum up the entries in colum
+> echo "mapped reads = $MAPPED"
+> Ratio=$(awk "BEGIN {printf \"%.8f\",${MAPPED}/${TOTAL}}")
+> echo "ratio= $Ratio"
+> percentage_stat=$(echo "scale=6; $Ratio*100" | bc)
+> echo "%percentage mapping for the present run= $percentage_stat"
+> echo "Total reads= $TOTAL" > $dir1.mapped_percentage.txt
+> echo "Total Mapped reads= $MAPPED" >> $dir1.mapped_percentage.txt
+> echo "Percentage of mapping for the run $dir1 is= $percentage_stat %" >> $dir1.mapped_percentage.txt
+> #---------------------------
+> #=======================================||
+> #Gender Control (Copy Number Variation) ||
+> #=======================================||
+> #Creating directory for CNV analysis 
+> mkdir /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis
+> cd /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis
+> # step1: Generating Sequencing-accessible regions
+> # cnvkit.py access /data/Data/hg19/ucsc.hg19.fasta -s 10000 -o /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/access-10kb.mn10.bed
+> #running all steps in single "Batch" command
+> cnvkit.py  batch /data/$dir1/Data/Intensities/BaseCalls/*IndReAl_Baserecal.bam --normal --targets /data/Data/Target_with_exon_and_gene_info.bed --fasta /data/Data/hg19/ucsc.hg19.fasta --split --access /data/Data/access-10kb.mn10.bed --output-reference /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/flat_reference.cnn -d /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis
+> # Identifying the gender of pasients
+> cnvkit.py gender /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/*cns > /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/p_gender.txt
+> #changing the long names
+> sed -i "s/\/data\/$dir1\/Data\/Intensities\/BaseCalls\/cnv_analysis\///g" /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/p_gender.txt
+> sed -i "s/_sorted_dedup_RG_IndReAl_Baserecal.cns//g" /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/p_gender.txt
+> cut -f 1-2 /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/p_gender.txt > /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/pasient_gender.txt
+> rm /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/p_gender.txt
+> #--------------------------------------------------------------------------
+> #Change of working directory back to "hg19"
+> cd /data/Data/hg19/
+>
+265a367,375
+> #Renaming the fields in INFO column for organized view in FILTUS.
+> for i in /data/$dir1/Data/Intensities/BaseCalls/*hg19_multianno.vcf ;
+> 	do
+> 		i2=${i%.*}_RENAMED.vcf;
+> 		sed -e 's/;Gene.refGene/;AAA_01_Gene.refGene/g; s/;Func.refGene/;AAA_02_Func.refGene/g; s/;GeneDetail.refGene/;AAA_03_GeneDetail.refGene/g; s/;AAChange.refGene/;AAA_04_AAChange.refGene/g; s/;ExonicFunc.refGene/;AAA_05_ExonicFunc.refGene/g; s/;snp138/;AAA_06_snp138/g; s/;1000g2015aug_eur/;AAA_07_1000g2015aug_eur/g; s/;ExAC_AFR/;AAA_08_ExAC_AFR/g; s/;ExAC_ALL/;AAA_09_ExAC_ALL/g; s/;ExAC_AMR/;AAA_10_ExAC_AMR/g; s/;ExAC_EAS/;AAA_11_ExAC_EAS/g; s/;ExAC_FIN/;AAA_12_ExAC_FIN/g; s/;ExAC_NFE/;AAA_13_ExAC_NFE/g; s/;ExAC_OTH/;AAA_14_ExAC_OTH/g; s/;ExAC_SAS/;AAA_15_ExAC_SAS/g; s/;esp6500si_all/;AAA_16_esp6500si_all/g; s/;clinvar_20150629/;AAA_17_clinvar_20150629/g; s/;cosmic70/;AAA_18_cosmic70/g; s/;Polyphen2_HDIV_pred/;AAA_19_Polyphen2_HDIV_pred/g; s/;Polyphen2_HDIV_score/;AAA_20_Polyphen2_HDIV_score/g; s/;Polyphen2_HVAR_pred/;AAA_21_Polyphen2_HVAR_pred/g; s/;Polyphen2_HVAR_score/;AAA_22_Polyphen2_HVAR_score/g; s/;SIFT_pred/;AAA_23_SIFT_pred/g; s/;SIFT_score/;AAA_24_SIFT_score/g; s/;MutationAssessor_pred/;AAA_25_MutationAssessor_pred/g; s/;MutationAssessor_score/;AAA_26_MutationAssessor_score/g; s/;MutationTaster_pred/;AAA_27_MutationTaster_pred/g; s/;MutationTaster_score/;AAA_28_MutationTaster_score/g; s/;LR_pred/;AAA_29_LR_pred/g; s/;LR_score/;AAA_30_LR_score/g; s/;FATHMM_pred/;AAA_31_FATHMM_pred/g; s/;FATHMM_score/;AAA_32_FATHMM_score/g; s/;GERP++_RS/;AAA_33_GERP++_RS/g; s/;genomicSuperDups/;AAA_34_genomicSuperDups/g; s/;phastConsElements46way/;AAA_35_phastConsElements46way/g; s/;phyloP100way_vertebrate/;AAA_36_phyloP100way_vertebrate/g; s/;phyloP46way_placental/;AAA_37_phyloP46way_placental/g' < $i > $i2
+> 	done
+> 
+> #removing the original VCF file (generated from ANNOVAR)
+> rm /data/$dir1/Data/Intensities/BaseCalls/*_SNP_INDEL_genotyped_filtered_ANNOVAR.hg19_multianno.vcf
+270a381
+> 
+301a413
+> echo "$PASS\n"| sudo -S cp /data/$dir1/Data/Intensities/BaseCalls/cnv_analysis/pasient_gender.txt /mnt/miseq/Medisinsk_Genetikk/Resultater/$dir1
+
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Dated: 18.07.2016
+
+Changes:
+        1. GAP region calculation added to the pipeline.
+	(in this feature, the sub regions (in target region) with coverage lower then 30 can be identified)
+(file_version_name: NGS_ANALYSIS_MedGen_18.07.2016.sh
+(Additional R_code created for gap region file generation)
+	(file_verson_name: R_code_for_gap_region_generation_18.07.2016.r)
+
+added code to main surce code: (for R_code, check the seperate R_code_file mentioned above)
+
+> #Generating the sample_low_coverage_region file (<30) from the sample_interval_summary file (superset) ............
+223c223
+<         awk -v x=30 -F "\t" '$2<=x {print}' "$FIRSTLINE.annotated.txt" > "$FIRSTLINE.low_coverage_region.txt"
+---
+>         awk -v x=29 -F "\t" '$2<=x {print}' "$FIRSTLINE.annotated.txt" > "$FIRSTLINE.low_coverage_region.txt"
+235a236,258
+> # Generating the Low_coverage_gap_region files for each sample
+> cut -f 1 "$dir1" > "$dir1.sample_coverage"
+> cut -f 1 "$dir1" > "$dir1.temp1"
+> i=1
+> while [ "$i" -le "$smpl" ] ; 
+> do
+>         jj=$(($i+3))
+>         cut -f $jj "$dir1" > "$dir1.temp"
+>         paste -d "\t" "$dir1.sample_coverage" "$dir1.temp" > "$dir1.op"
+>         mv "$dir1.op" "$dir1.sample_coverage"
+>         read -r FIRSTLINE < $dir1.temp
+>         paste -d "\t" "$dir1.temp1" "$dir1.temp" > "$dir1.FIRSTLINE.txt"
+>         cut -f 2 "$dir1.FIRSTLINE.txt" >"$dir1.FIRSTLINE_coverage"
+>         paste -d "\t" /data/Data/Target_Nucleotide_annotated.csv "$dir1.FIRSTLINE_coverage" >"$dir1.FIRSTLINE.txt"
+>         awk -v x=29 -F "\t" '$5<=x {print}' "$dir1.FIRSTLINE.txt" > "$FIRSTLINE.gap_region.txt"
+>         rm "$dir1.FIRSTLINE.txt"
+>         i=$(($i+1));
+> 	Rscript ~/my_tools/NGS_pipeline/R_code_for_gap_region_generation.r $FIRSTLINE.gap_region.txt $FIRSTLINE.gap_region_final.csv
+> rm "$FIRSTLINE.gap_region.txt"
+> done
+> rm "$dir1.FIRSTLINE_coverage"
+> rm "$dir1.sample_coverage"
+> rm $dir1.temp*
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Dated: 30.11.2016
+
+Changes:
+	1. Mapping quality filter threshold change (from 20) to 0
+		MQ>=0
+	2. GAP region related coverage_depth threshold changed (from 30) to 50
+		Cov_Depth>=50
+
+changes in code (New VS Old):
+210c210
+< #Generating the sample_low_coverage_region file (<50) from the sample_interval_summary file (superset) ............
+---
+> #Generating the sample_low_coverage_region file (<30) from the sample_interval_summary file (superset) ............
+223c223
+<         awk -v x=49 -F "\t" '$2<=x {print}' "$FIRSTLINE.annotated.txt" > "$FIRSTLINE.low_coverage_region.txt"
+---
+>         awk -v x=29 -F "\t" '$2<=x {print}' "$FIRSTLINE.annotated.txt" > "$FIRSTLINE.low_coverage_region.txt"
+236c236
+< # Generating the Low_coverage_gap_region (<50) files for each sample
+---
+> # Generating the Low_coverage_gap_region files for each sample
+250c250
+<         awk -v x=49 -F "\t" '$5<=x {print}' "$dir1.FIRSTLINE.txt" > "$FIRSTLINE.gap_region.txt"
+---
+>         awk -v x=29 -F "\t" '$5<=x {print}' "$dir1.FIRSTLINE.txt" > "$FIRSTLINE.gap_region.txt"
+334c334
+< 	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort |head -n $c| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -mmq 0 -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+---
+> 	find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort |head -n $c| tail -n 8| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+338c338
+< find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort | tail -n $b| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -mmq 0 -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+---
+> find /data/$dir1/Data/Intensities/BaseCalls/ -name "*_sorted_dedup_RG_IndReAl_Baserecal.bam"| sort | tail -n $b| sed 's/_sorted_dedup_RG_IndReAl_Baserecal.bam//' | parallel java -jar ~/my_tools/GATK/GenomeAnalysisTK.jar -T HaplotypeCaller -R ucsc.hg19.fasta -I {}_sorted_dedup_RG_IndReAl_Baserecal.bam -o {}_raw_SNP_INDEL.g.vcf -ERC GVCF --variant_index_type LINEAR --variant_index_parameter 128000 --dbsnp /data/Data/GATK_resources/dbsnp_138.hg19.vcf -L /data/Data/NexteraRapidCapture-71370-targeted-regions_v4.bed
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
