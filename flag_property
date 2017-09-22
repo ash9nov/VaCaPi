@@ -1,0 +1,14 @@
+Properties
+total
+secondary
+supplementary
+duplicates
+mapped
+paired_in _sequencing
+read1
+read2
+properly paired
+with_itself_and_mate_mapped
+singletons
+with_mate_mapped_to_a_different_chr
+with_mate_mapped_to_a_different_chr_(mapQ>=5)
